@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ALT_CODEX_HOME="${CODEX_1M_HOME:-$HOME/.codex/memories/codex-home-1m}"
+SRC_CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
+CODEX_1M_MODEL="${CODEX_1M_MODEL:-gpt-5.5}"
+CODEX_1M_CONTEXT_WINDOW="${CODEX_1M_CONTEXT_WINDOW:-1000000}"
+CODEX_1M_CONTEXT_SIZE="${CODEX_1M_CONTEXT_SIZE:-max}"
+CODEX_1M_MODEL_CATALOG_JSON="${CODEX_1M_MODEL_CATALOG_JSON:-$HOME/.codex/memories/gpt-5.5-1m-model-catalog.json}"
+CODEX_BIN="${CODEX_1M_CODEX_BIN:-codex}"
+
+mkdir -p "$ALT_CODEX_HOME"
+
+if [ -f "$SRC_CODEX_HOME/auth.json" ] && {
+  [ ! -f "$ALT_CODEX_HOME/auth.json" ] || [ "$SRC_CODEX_HOME/auth.json" -nt "$ALT_CODEX_HOME/auth.json" ]
+}; then
+  cp "$SRC_CODEX_HOME/auth.json" "$ALT_CODEX_HOME/auth.json"
+fi
+
+tmp_config="$(mktemp)"
+cleanup() {
+  rm -f "$tmp_config"
+}
+trap cleanup EXIT
+
+toml_quote() {
+  printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+}
+
+model_toml="$(toml_quote "$CODEX_1M_MODEL")"
+context_size_toml="$(toml_quote "$CODEX_1M_CONTEXT_SIZE")"
+model_catalog_toml="$(toml_quote "$CODEX_1M_MODEL_CATALOG_JSON")"
+
+if [ ! -f "$SRC_CODEX_HOME/config.toml" ]; then
+  {
+    printf 'model = %s\n' "$model_toml"
+    printf 'model_context_window = %s\n' "$CODEX_1M_CONTEXT_WINDOW"
+    printf 'context_size = %s\n' "$context_size_toml"
+    printf 'model_catalog_json = %s\n' "$model_catalog_toml"
+  } > "$tmp_config"
+  mv "$tmp_config" "$ALT_CODEX_HOME/config.toml"
+  CODEX_HOME="$ALT_CODEX_HOME" exec "$CODEX_BIN" "$@"
+fi
+
+awk \
+  -v model="$model_toml" \
+  -v context_window="$CODEX_1M_CONTEXT_WINDOW" \
+  -v context_size="$context_size_toml" \
+  -v model_catalog_json="$model_catalog_toml" \
+'
+BEGIN {
+  done_model = 0
+  done_window = 0
+  done_context_size = 0
+  done_model_catalog_json = 0
+  emitted_missing = 0
+}
+function emit_missing() {
+  if (!done_model) {
+    print "model = " model
+    done_model = 1
+  }
+  if (!done_window) {
+    print "model_context_window = " context_window
+    done_window = 1
+  }
+  if (!done_context_size) {
+    print "context_size = " context_size
+    done_context_size = 1
+  }
+  if (!done_model_catalog_json) {
+    print "model_catalog_json = " model_catalog_json
+    done_model_catalog_json = 1
+  }
+  emitted_missing = 1
+}
+{
+  if ($0 ~ /^[[:space:]]*\[/ && !emitted_missing) {
+    emit_missing()
+  }
+
+  if (!emitted_missing) {
+    if ($0 ~ /^[[:space:]]*model[[:space:]]*=/) {
+      if (!done_model) {
+        print "model = " model
+        done_model = 1
+      }
+      next
+    }
+    if ($0 ~ /^[[:space:]]*model_context_window[[:space:]]*=/) {
+      if (!done_window) {
+        print "model_context_window = " context_window
+        done_window = 1
+      }
+      next
+    }
+    if ($0 ~ /^[[:space:]]*context_size[[:space:]]*=/) {
+      if (!done_context_size) {
+        print "context_size = " context_size
+        done_context_size = 1
+      }
+      next
+    }
+    if ($0 ~ /^[[:space:]]*model_catalog_json[[:space:]]*=/) {
+      if (!done_model_catalog_json) {
+        print "model_catalog_json = " model_catalog_json
+        done_model_catalog_json = 1
+      }
+      next
+    }
+  }
+  print
+}
+END {
+  if (!emitted_missing) {
+    emit_missing()
+  }
+}
+' "$SRC_CODEX_HOME/config.toml" > "$tmp_config"
+
+mv "$tmp_config" "$ALT_CODEX_HOME/config.toml"
+
+CODEX_HOME="$ALT_CODEX_HOME" exec "$CODEX_BIN" "$@"
