@@ -266,8 +266,12 @@ def step_length_and_name(payload: str, pos: int, tag: str, header: int, dex_type
         return 85, name, "curveFlags,amountIn,pool,recipient,bound"
     if header == 0x06:
         if dex_type == 0x00:
-            return 135, name, "amount,recipient,tokenIn,tokenOut,poolId,bound"
-        return 103, name, "amount,poolOrRecipient,tokenIn,tokenOut,boundOrHook"
+            return 135, "balancerV2", "amount,recipient,tokenIn,tokenOut,poolId,bound"
+        if dex_type == 0x01:
+            return 103, "BPT", "amount,pool,tokenIn,tokenOut,bound"
+        if dex_type == 0x02:
+            return 123, "balancerV3", "amount,recipient,tokenIn,tokenOut,pool,hook"
+        return 103, "balancer_family", "amount,poolOrRecipient,tokenIn,tokenOut,boundOrHook"
     if header in (0x07, 0x08, 0x09, 0x0A):
         if dex_type == 0x02:
             return 43, name, "settle amount,token"
@@ -614,6 +618,19 @@ def percent(num: int, den: int) -> str:
     return f"{num * 100 / den:.2f}%"
 
 
+def row_int(row: dict[str, Any], key: str) -> int:
+    value = row.get(key)
+    if value in (None, ""):
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        try:
+            return int(float(value))
+        except (TypeError, ValueError):
+            return 0
+
+
 def analyze(batch_dir: Path, resps_paths: list[Path], write_report: bool, output: Path | None) -> dict[str, Any]:
     replay_rows = load_replay_rows(batch_dir)
     replay_tx_by_short = {}
@@ -711,8 +728,26 @@ def analyze(batch_dir: Path, resps_paths: list[Path], write_report: bool, output
                 }
             )
 
-    totals["direct_success_txn"] = direct_success_txn
-    totals["direct_success_item"] = totals["direct_success_item_resp"] or totals["direct_success_item_mid1"]
+    has_replay_direct = any("directSuccessCount" in row for row in replay_rows)
+    has_replay_dynamic = any("dynamicSuccessCount" in row for row in replay_rows)
+    has_replay_mid1_items = any("mid1RevenueSuccessCount" in row for row in replay_rows)
+
+    if has_replay_direct:
+        totals["direct_success_txn"] = sum(1 for row in replay_rows if row_int(row, "directSuccessCount") > 0)
+        totals["direct_success_item"] = sum(row_int(row, "directSuccessCount") for row in replay_rows)
+    else:
+        totals["direct_success_txn"] = direct_success_txn
+        totals["direct_success_item"] = totals["direct_success_item_resp"] or totals["direct_success_item_mid1"]
+
+    if has_replay_dynamic:
+        totals["dynamic_success_item"] = sum(row_int(row, "dynamicSuccessCount") for row in replay_rows)
+    if has_replay_mid1_items:
+        totals["mid1_item_count"] = sum(row_int(row, "mid1RevenueSuccessCount") for row in replay_rows)
+        totals["mid1_txn_count"] = sum(
+            1
+            for row in replay_rows
+            if row.get("mid1Produced") == "Y" or row_int(row, "mid1RevenueSuccessCount") > 0
+        )
     summary = {
         "batch_dir": str(batch_dir),
         "sample_range": rel_test_output(batch_dir),

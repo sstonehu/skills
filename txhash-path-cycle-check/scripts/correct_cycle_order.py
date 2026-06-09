@@ -59,15 +59,32 @@ def leg_priority(from_addr, stable_set):
 # ── parsing ──────────────────────────────────────────────────────────
 
 def parse_report(report_path):
-    """Extract routeIds and pool keys from find_path_cycle report."""
+    """Extract routeIds from find_path_cycle report. Returns (route_ids, cycle_info_dict)."""
     with open(report_path) as f:
         content = f.read()
     route_ids = []
+    cycle_info = {"cycleExists": False, "cycleId": -1, "minUsd": 0.0, "mismatchKind": "?"}
     for line in content.split('\n'):
         m = re.search(r',\s*(-?\d+),\s*([0-9.]+)$', line)
         if m:
             route_ids.append(int(m.group(1)))
-    return route_ids
+        # Parse cycle existence line
+        if line.startswith("exists="):
+            for p in line.split(","):
+                p = p.strip()
+                if p.startswith("exists="):
+                    cycle_info["cycleExists"] = (p.split("=")[1].lower() == "true")
+                elif p.startswith("mismatchKind="):
+                    cycle_info["mismatchKind"] = p.split("=")[1]
+            m = re.search(r'internalCid=(\d+)', line)
+            if m:
+                cycle_info["cycleId"] = int(m.group(1))
+            m = re.search(r'minUsd=([0-9.]+)', line)
+            if m:
+                cycle_info["minUsd"] = float(m.group(1))
+    if cycle_info["cycleExists"] and cycle_info["mismatchKind"] == "?":
+        cycle_info["mismatchKind"] = "found"
+    return route_ids, cycle_info
 
 def parse_target_paths(analysis_json_path):
     """Extract legs with correct token direction from identify output."""
@@ -96,12 +113,17 @@ def reorder_cycle(legs, stable_set):
     """
     Phase-aware DFS: find largest closed-cycle subset starting from
     highest-priority leg.  Append remaining (cashPool) legs.
+    Returns (ordered_legs, is_reordered).
     """
     n = len(legs)
-    if n <= 2:
-        return legs
+    original_route_ids = [leg.get('routeId', -1) for leg in legs]
 
-    for cycle_size in range(n, 2, -1):
+    if n < 2:
+        for leg in legs:
+            leg['in_cycle'] = False
+        return legs, False
+
+    for cycle_size in range(n, 1, -1):
         best_result, best_priority = None, 99
         for start in range(n):
             path = [start]
@@ -137,8 +159,17 @@ def reorder_cycle(legs, stable_set):
                     best_priority = rp
                     best_result = res
         if best_result is not None:
-            return best_result
-    return legs
+            # Mark in_cycle for the closed-cycle subset (first cycle_size legs)
+            cycle_count = cycle_size
+            for i, leg in enumerate(best_result):
+                leg['in_cycle'] = (i < cycle_count)
+            reordered = ([l['routeId'] for l in best_result] != original_route_ids)
+            return best_result, reordered
+
+    # No closed cycle found — all legs marked not in cycle
+    for leg in legs:
+        leg['in_cycle'] = False
+    return legs, False
 
 # ── main ─────────────────────────────────────────────────────────────
 
@@ -146,8 +177,10 @@ def main():
     p = argparse.ArgumentParser(description='Phase-aware cycle reordering')
     p.add_argument('output_dir', help='Directory containing identify/ and path_cycle_report.txt')
     p.add_argument('--config-dir', default=None,
-                   help='go-service/conf directory (default: auto-detect from workspace)')
+                   help='go-service/conf directory (default: auto-detect from workspace or GO_SERVICE_DIR env var)')
     p.add_argument('--csv', action='store_true', help='Output CSV instead of JSON')
+    p.add_argument('--rich', action='store_true', help='Output rich CSV with txHash, cycleId, isReordered, inCycle')
+    p.add_argument('--tx-hash', default='', help='txHash for --rich CSV context')
     args = p.parse_args()
 
     out_dir = args.output_dir
@@ -164,45 +197,61 @@ def main():
     # Auto-detect config dir
     config_dir = args.config_dir
     if not config_dir:
-        # Walk up from output_dir to find go-service/conf
-        d = os.path.abspath(out_dir)
-        while d != '/':
-            candidate = os.path.join(d, 'go-service', 'conf')
-            if os.path.isdir(candidate):
-                config_dir = candidate
-                break
-            d = os.path.dirname(d)
-        if not config_dir:
-            # Fallback: assume workspace root
-            config_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'go-service', 'conf')
-            config_dir = os.path.normpath(config_dir)
+        # Priority: GO_SERVICE_DIR env var -> walk-up from output -> file location fallback
+        gsd = os.environ.get('GO_SERVICE_DIR', '')
+        if gsd and os.path.isdir(os.path.join(gsd, 'conf')):
+            config_dir = os.path.join(gsd, 'conf')
+        else:
+            d = os.path.abspath(out_dir)
+            while d != '/':
+                candidate = os.path.join(d, 'go-service', 'conf')
+                if os.path.isdir(candidate):
+                    config_dir = candidate
+                    break
+                d = os.path.dirname(d)
+            if not config_dir:
+                config_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'go-service', 'conf')
+                config_dir = os.path.normpath(config_dir)
 
     stable_set = load_stable_set(config_dir)
 
     # Parse inputs
-    route_ids = parse_report(report_txt)
+    route_ids, cycle_info = parse_report(report_txt)
     legs = parse_target_paths(analysis_json)
 
-    # Map routeIds by pool position (they match by order in report == order in targetPoolPaths)
-    # report output order matches targetPoolPaths order (Go reads them in sequence)
+    # Map routeIds by pool position (match by order in report == order in targetPoolPaths)
     for i, leg in enumerate(legs):
         leg['routeId'] = route_ids[i] if i < len(route_ids) else -1
 
     # Reorder
-    ordered = reorder_cycle(legs, stable_set)
+    ordered, is_reordered = reorder_cycle(legs, stable_set)
 
-    if args.csv:
-        # CSV output
-        import csv, io
-        buf = io.StringIO()
-        w = csv.writer(buf)
+    if args.rich:
+        # Rich CSV with txHash, cycleId, isReordered, per-leg detail
+        import csv as _csv, io as _io
+        buf = _io.StringIO()
+        w = _csv.writer(buf)
+        w.writerow(['txHash', 'cycleId', 'isReordered', 'legIdx', 'routeId', 'dex',
+                     'poolId', 'from', 'to', 'inCycle'])
+        for i, leg in enumerate(ordered):
+            pid = leg.get('poolId', '') or leg.get('poolAddress', '')
+            w.writerow([args.tx_hash, cycle_info['cycleId'], str(is_reordered).lower(),
+                        i, leg['routeId'], leg['dex'], pid,
+                        leg['fromSymbol'], leg['toSymbol'],
+                        str(leg.get('in_cycle', False)).lower()])
+        sys.stdout.write(buf.getvalue())
+    elif args.csv:
+        # Legacy CSV output (now with in_cycle filled)
+        import csv as _csv, io as _io
+        buf = _io.StringIO()
+        w = _csv.writer(buf)
         w.writerow(['idx', 'from', 'to', 'routeId', 'poolAddress', 'poolId', 'dex',
                      'start_priority', 'in_cycle'])
         for i, leg in enumerate(ordered):
             w.writerow([i, leg['fromSymbol'], leg['toSymbol'], leg['routeId'],
                         leg['poolAddress'], leg['poolId'], leg['dex'],
                         leg_priority(leg['fromAddr'], stable_set),
-                        ''])  # in_cycle flag TBD
+                        str(leg.get('in_cycle', False)).lower()])
         sys.stdout.write(buf.getvalue())
     else:
         json.dump(ordered, sys.stdout, indent=2, default=str)

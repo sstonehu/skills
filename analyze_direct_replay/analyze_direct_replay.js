@@ -232,6 +232,8 @@ function analyzeBatch(resolved, args) {
 
   const csvStats = deriveCsvStats(csvRows);
   const txnCount = csvStats.txnCount || groups.length;
+  const blockMatchCount = csvStats.blockMatchCount || txnCount;
+  const noBlockMatchCount = csvStats.noBlockMatchCount || 0;
   const txnWithMid1 = csvStats.txnWithMid1 || derivedTxnWithMid1;
   const txnWithDirectSuccess = csvStats.txnWithDirectSuccess || derivedTxnWithDirectSuccess;
   const mid1ItemCount = csvStats.mid1ItemCount || totalMid1Items;
@@ -359,6 +361,8 @@ function deriveCsvStats(csvRows) {
   if (!csvRows.length) {
     return {
       txnCount: 0,
+      blockMatchCount: 0,
+      noBlockMatchCount: 0,
       txnWithMid1: 0,
       txnWithDirectSuccess: 0,
       mid1ItemCount: 0,
@@ -367,13 +371,16 @@ function deriveCsvStats(csvRows) {
     };
   }
   const countFlag = (row, key) => String(row[key] || '').toUpperCase() === 'Y';
+  const eligible = csvRows.filter((row) => String(row.error || '').trim() !== 'no_block_match');
   return {
     txnCount: csvRows.length,
-    txnWithMid1: csvRows.filter((row) => countFlag(row, 'mid1Produced')).length,
-    txnWithDirectSuccess: csvRows.filter((row) => toNumber(row.directSuccessCount) > 0).length,
-    mid1ItemCount: csvRows.reduce((sum, row) => sum + toNumber(row.mid1RevenueSuccessCount), 0),
-    directSuccessItemCount: csvRows.reduce((sum, row) => sum + toNumber(row.directSuccessCount), 0),
-    dynamicSuccessCount: csvRows.reduce((sum, row) => sum + toNumber(row.dynamicSuccessCount), 0),
+    blockMatchCount: eligible.length,
+    noBlockMatchCount: csvRows.length - eligible.length,
+    txnWithMid1: eligible.filter((row) => countFlag(row, 'mid1Produced')).length,
+    txnWithDirectSuccess: eligible.filter((row) => toNumber(row.directSuccessCount) > 0).length,
+    mid1ItemCount: eligible.reduce((sum, row) => sum + toNumber(row.mid1RevenueSuccessCount), 0),
+    directSuccessItemCount: eligible.reduce((sum, row) => sum + toNumber(row.directSuccessCount), 0),
+    dynamicSuccessCount: eligible.reduce((sum, row) => sum + toNumber(row.dynamicSuccessCount), 0),
   };
 }
 
@@ -587,15 +594,21 @@ function decodeSingleStep(pathHex, offsetBytes, totalBytes) {
     case '06':
       if (type === '00') {
         length = 135;
+        tagLabel = 'balancerV2';
+        semantic = 'balancerV2';
       } else if (type === '01') {
         length = 103;
+        tagLabel = 'BPT';
+        semantic = 'BPT';
       } else if (type === '02') {
         length = 123;
+        tagLabel = 'balancerV3';
+        semantic = 'balancerV3';
       } else {
         length = 103;
+        tagLabel = 'balancer-family';
+        semantic = 'balancer-family';
       }
-      tagLabel = 'balancer-family';
-      semantic = 'balancer-family';
       break;
     case '07':
       if (type === '02') {
