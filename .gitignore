@@ -1,0 +1,9 @@
+# Local credentials and environment overrides
+.env
+.env.*
+!.env.example
+
+# Ignore per-skill local environment files
+**/.env
+**/.env.*
+!**/.env.example
