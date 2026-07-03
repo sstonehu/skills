@@ -14,8 +14,19 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-WS_DIR="$(cd "$SKILL_DIR/../.." && pwd)"
-GO_SERVICE_DIR="$WS_DIR/go-service"
+
+# Auto-detect go-service: env var > walk-up from skill dir > $HOME/dt_workspace
+if [[ -n "${GO_SERVICE_DIR:-}" ]] && [[ -d "$GO_SERVICE_DIR/cmd/replay" ]]; then
+  :
+elif [[ -d "$SKILL_DIR/../../../../go-service/cmd/replay" ]]; then
+  GO_SERVICE_DIR="$(cd "$SKILL_DIR/../../../../go-service" && pwd)"
+elif [[ -d "$HOME/dt_workspace/go-service/cmd/replay" ]]; then
+  GO_SERVICE_DIR="$HOME/dt_workspace/go-service"
+else
+  echo "ERROR: cannot find go-service. Set GO_SERVICE_DIR env var." >&2
+  exit 1
+fi
+WS_DIR="$(dirname "$GO_SERVICE_DIR")"
 
 TS="$(date +%Y%m%d%H%M%S)"
 TX_SHORT="${TX_HASH:2:8}"

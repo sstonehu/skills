@@ -160,6 +160,49 @@ description: "Analyze RouterProxyV8Direct direct replay results end-to-end: deco
 - 如果 `reqs/resps/mid1` 可一一映射，优先按 `id` 对齐，并在明细中保留 `id`。
 - 若 `output` 为空，仍需给出 step 定位，不得回退为“仅文本原因”。
 
+## 批次完整输出 (4 文件)
+
+通过 `scripts/batch_analyze.sh <batch_dir>` 一键生成。单独运行：
+
+```bash
+# Phase 1: direct replay 分析
+node skills/analyze_direct_replay/analyze_direct_replay.js <batch_dir>
+
+# Phase 2: mid1 cycle/fail 分析
+python3 skills/cycle-fail-analysis/scripts/analyze.py <batch_dir>
+```
+
+| 文件 | 来源 | 说明 |
+|------|------|------|
+| `direct_fail_report.md` | `analyze_direct_replay.{js,py}` | direct revert 统计 + 逐条 calldata 拆解 |
+| `mid1_target_cycle.json` | `cycle-fail-analysis/analyze.py` | JSON 数组: per-TX cycle/path 详情，`idx` 为 replay_result 数据行号 - 1 |
+| `mid1_target_cycle.csv` | `cycle-fail-analysis/analyze.py` | 12 列: txHash..poolIds, corrected route order，`idx` 为 replay_result 数据行号 - 1 |
+| `mid1_fail_detail_v3_classified.csv` | `cycle-fail-analysis/analyze.py` | 17 列: txHash..routeIds, 逐阶段失败明细 |
+
+### mid1_target_cycle.csv 列说明
+
+```
+txHash, blockNumber, idx, logCount, poolPathCount, legs, reordered,
+cycleExists, mismatchKind, cycleRouteIds, pathDetail, poolIds
+```
+
+- `legs`: logicHopCount (cycle 存在时) 否则 legCount
+- `reordered`: correct_cycle_order 是否改变了 route 排序
+- `cycleRouteIds`: corrected order 下的逗号分隔 routeId
+- `pathDetail`: pipe-separated `dex:from->to`
+- `poolIds`: pipe-separated, poolId 为空时 fallback 到 poolAddress (UniswapV3)
+
+### mid1_fail_detail_v3_classified.csv 列说明
+
+```
+txHash, idx, short, hop, cycleId, targetRoute, dp_evt, mid25, after,
+mid1, best, minUsd, orig_cls, matchKind, new_cls, cycle_path, routeIds
+```
+
+- `new_cls`: X_no_success / X_no_cycle / X_no_route / X_no_block
+- `cycle_path`: pipe-separated `routeId dex poolId from->to pos_referLen_lastHop_lastMinUsd` (corrected order)
+- `orig_cls`: X1 (正常运行) / ? (无 step_d 日志)
+
 ## 注意事项
 
 - 不要把“revert 文本为空”误认为“无法定位 step”；优先通过 step 协议解码 + trace error path 定位。
