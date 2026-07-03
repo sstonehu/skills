@@ -1,0 +1,6 @@
+interface:
+  display_name: "Analyze Logs With DuckDB"
+  short_description: "DuckDB workflows for dt-logs"
+  default_prompt: "Use $analyze_log_duckdb to inspect dt-logs with DuckDB."
+policy:
+  allow_implicit_invocation: true

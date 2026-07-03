@@ -1,0 +1,4 @@
+interface:
+  display_name: "DT Analysis Txn"
+  short_description: "5-step competitor txn replay and root cause"
+  default_prompt: "Analyze competitor txHash and target block using dt-analysis-txn skill"

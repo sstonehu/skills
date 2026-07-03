@@ -1,0 +1,4 @@
+interface:
+  display_name: "Task Worktree"
+  short_description: "Create isolated multi-repo task workspaces with git worktrees."
+  default_prompt: "Create an isolated task worktree workspace for a cross-repo replay, operations, or testing task."
