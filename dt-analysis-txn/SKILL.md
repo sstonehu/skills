@@ -77,7 +77,7 @@ Replay the opportunity through builder to generate simulatorEvent.json, verify t
 
 Read: [references/step4-replay.md](references/step4-replay.md)
 
-Key: uncomment opportunity.json dump in `mev.listener.block.js`, run `test_mev.simulator_block.js` via hardhat, copy opportunity.json to go-service, uncomment simulatorEvent.json dump in `opportunity_handler.go`, run `replay_builder`.
+Key: uncomment opportunity.json dump in `mev.listener.block.js`, run `test_mev.simulator_block.js` via hardhat, copy opportunity.json to go-service, uncomment simulatorEvent.json dump in `opportunity_handler.go`, **uncomment pipeline stage snapshot dumps in `simulator_async.go`** (SeedOut, Mid25Revenue, Mid25Revenue.after, priceMapAcc, mid1_Revenue), run `replay_builder`.
 
 - Target cycle in DuralPaths: optionally replay_simulator for detailed simulation. Stop.
 - Target cycle NOT in DuralPaths: proceed to Step 5.

@@ -96,3 +96,36 @@ By default this removes the copied `.env` files from task worktrees, keeps `outp
 - Do not write task snapshots or logs to shared absolute paths unless the path includes `TASK_ID`.
 - If a task workspace already exists, inspect it rather than recreating or overwriting it.
 - If branch creation fails because a branch already exists or is checked out elsewhere, stop and report the exact branch and worktree path.
+
+## Enable Snapshot Dump Switches
+
+When debugging or replaying, you often need go-service to dump intermediate JSON snapshots to `test_output/`. The source files contain commented-out `util.WriteJSONFile` calls for this purpose. Use the bundled script to uncomment them all at once:
+
+```bash
+/home/ecs-user/dt_workspace/skills/task-worktree/scripts/enable-snapshot-dump.sh [GO_SERVICE_DIR]
+```
+
+If `GO_SERVICE_DIR` is omitted, it defaults to `./go-service` (task worktree layout).
+
+The script is idempotent and handles missing imports automatically. It uncomments dump calls for:
+
+| File | Snapshot files |
+| --- | --- |
+| `opportunity_handler.go` | `simulatorEvent.json` |
+| `simulator_async.go` | `SeedOut.json`, `Mid25Revenue.json`, `Mid25Revenue.after.json`, `mid1_Revenue.json` (x2) |
+| `pricer.go` | `pricer.requestBodies.%d.json`, `pricer.responses.%d.json` |
+| `try_arbi_batch.go` | `reqs.json`, `debug_result.json` |
+| `try_arbi_batch_direct.go` | `direct_reqs.json`, `direct_resp.json` |
+
+It also:
+
+- Creates `test_output/` in the go-service directory (`os.WriteFile` does not create directories).
+- Uncomments or adds the `"log"` and `"go-service/pkg/util"` imports where needed.
+- Leaves the `else` branch (`dynamic_resp.json`) in `try_arbi_batch_direct.go` commented, because Go requires `} else {` on one line and the user only requested `direct_*` files.
+
+To revert all changes:
+
+```bash
+cd <GO_SERVICE_DIR>
+git checkout -- core/builder/opportunity_handler.go core/simulator/simulator_async.go core/pricer/pricer.go core/simulator/try_arbi_batch.go core/simulator/try_arbi_batch_direct.go
+```

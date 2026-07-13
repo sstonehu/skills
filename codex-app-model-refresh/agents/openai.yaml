@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex App Model Refresh"
+  short_description: "Diagnose stale Codex App model menus and app-server state."
+  default_prompt: "Use $codex-app-model-refresh to diagnose why the Codex App /model list is stale."
